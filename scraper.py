@@ -1,7 +1,9 @@
 import os
+import json
 import time
 import random
 import logging
+from pathlib import Path
 from dotenv import load_dotenv
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -16,8 +18,7 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-AMAZON_EMAIL    = os.getenv("AMAZON_EMAIL", "")
-AMAZON_PASSWORD = os.getenv("AMAZON_PASSWORD", "")
+COOKIES_FILE = "amazon_session.json"
 
 
 def build_driver(headless=False):
@@ -47,55 +48,71 @@ def build_driver(headless=False):
     return driver
 
 
-def amazon_login(driver):
-    if not AMAZON_EMAIL or not AMAZON_PASSWORD:
-        log.info("No Amazon credentials in .env — skipping login (may hit CAPTCHAs)")
-        return False
+def save_cookies(driver):
+    cookies = driver.get_cookies()
+    with open(COOKIES_FILE, "w") as f:
+        json.dump(cookies, f)
+    log.info(f"Session saved to {COOKIES_FILE} — won't need to login next time.")
 
-    log.info("Logging in to Amazon.in...")
-    driver.get("https://www.amazon.in/ap/signin?openid.pape.max_auth_age=0&openid.return_to=https%3A%2F%2Fwww.amazon.in%2F&openid.identity=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.assoc_handle=inflex&openid.mode=checkid_setup&openid.claimed_id=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.ns=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0")
+
+def load_cookies(driver):
+    if not Path(COOKIES_FILE).exists():
+        return False
+    driver.get("https://www.amazon.in")
     time.sleep(2)
+    with open(COOKIES_FILE) as f:
+        cookies = json.load(f)
+    for cookie in cookies:
+        try:
+            driver.add_cookie(cookie)
+        except Exception:
+            pass
+    driver.refresh()
+    time.sleep(2)
+    return True
 
-    try:
-        # Enter email
-        email_field = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.ID, "ap_email"))
-        )
-        email_field.clear()
-        email_field.send_keys(AMAZON_EMAIL)
-        driver.find_element(By.ID, "continue").click()
+
+def is_logged_in(driver):
+    return "nav-link-accountList-nav-line-1" in driver.page_source or \
+           "Hello," in driver.page_source or \
+           "nav-greeting-name" in driver.page_source
+
+
+def ensure_logged_in(driver):
+    # Try saved session first
+    if Path(COOKIES_FILE).exists():
+        log.info("Found saved session, trying to restore...")
+        load_cookies(driver)
+        driver.get("https://www.amazon.in")
         time.sleep(2)
+        if is_logged_in(driver):
+            log.info("Session restored — no login needed.")
+            return
 
-        # Enter password
-        pwd_field = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.ID, "ap_password"))
-        )
-        pwd_field.clear()
-        pwd_field.send_keys(AMAZON_PASSWORD)
-        driver.find_element(By.ID, "signInSubmit").click()
-        time.sleep(3)
+    # No saved session: open login page and wait for manual login
+    log.info("Opening Amazon login page...")
+    driver.get("https://www.amazon.in/ap/signin?openid.return_to=https%3A%2F%2Fwww.amazon.in%2F&openid.identity=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.assoc_handle=inflex&openid.mode=checkid_setup&openid.claimed_id=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.ns=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0")
 
-        # Check if OTP / CAPTCHA page appeared
-        if "ap/cvf" in driver.current_url or "ap/challenge" in driver.current_url:
-            log.warning("Amazon is asking for OTP or CAPTCHA. Please complete it in the browser window.")
-            input("Press ENTER here once you've completed the verification in the browser...")
+    print("\n" + "="*60)
+    print("  Amazon login page is open in Chrome.")
+    print("  Please log in manually (OTP, Google, etc.)")
+    print("  Once you are on the Amazon homepage, come back here.")
+    print("="*60)
+    input("  Press ENTER after you have logged in successfully: ")
 
-        if "amazon.in" in driver.current_url and "signin" not in driver.current_url:
-            log.info("Login successful.")
-            return True
-        else:
-            log.warning("Login may have failed. Continuing anyway...")
-            return False
-
-    except Exception as e:
-        log.warning(f"Login failed: {e}. Continuing without login.")
-        return False
+    if is_logged_in(driver):
+        save_cookies(driver)
+        log.info("Login confirmed and session saved.")
+    else:
+        log.warning("Could not confirm login — scraping will continue anyway.")
 
 
 def wait_if_captcha(driver):
     if "captcha" in driver.page_source.lower() or "robot" in driver.page_source.lower():
-        log.warning("CAPTCHA detected! Please solve it in the browser window.")
-        input("Press ENTER here once you've solved the CAPTCHA...")
+        print("\n" + "="*60)
+        print("  CAPTCHA detected! Please solve it in the Chrome window.")
+        print("="*60)
+        input("  Press ENTER once you've solved the CAPTCHA: ")
         time.sleep(2)
 
 
@@ -124,7 +141,7 @@ def scrape_product_reviews(driver, asin, max_pages=5):
                 EC.presence_of_element_located((By.CSS_SELECTOR, "[data-hook='review']"))
             )
         except TimeoutException:
-            log.warning(f"No reviews found on page {page} for {asin} — stopping")
+            log.warning(f"No reviews on page {page} for {asin} — stopping")
             break
 
         review_els = driver.find_elements(By.CSS_SELECTOR, "[data-hook='review']")
@@ -218,7 +235,7 @@ def run_scraper(asins_file="asins.csv", max_pages=5, headless=False):
     total_saved = 0
 
     try:
-        amazon_login(driver)
+        ensure_logged_in(driver)
 
         for product in products:
             asin = product.get("asin", "").strip()
@@ -257,6 +274,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--asins", default="asins.csv")
     parser.add_argument("--pages", type=int, default=5)
-    parser.add_argument("--headless", action="store_true", help="Run browser invisibly")
+    parser.add_argument("--headless", action="store_true")
     args = parser.parse_args()
     run_scraper(asins_file=args.asins, max_pages=args.pages, headless=args.headless)
