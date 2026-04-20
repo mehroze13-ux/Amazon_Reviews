@@ -4,71 +4,177 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Amazon Reviews Dashboard</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet"/>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/wordcloud2.js/1.2.2/wordcloud2.min.js"></script>
   <style>
-    body { background: #f4f6f9; font-family: 'Segoe UI', sans-serif; }
-    .navbar { background: #232f3e; }
-    .navbar-brand { color: #ff9900 !important; font-weight: 700; font-size: 1.3rem; }
-    .kpi-card { border-radius: 12px; border: none; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
-    .kpi-value { font-size: 2.2rem; font-weight: 700; }
-    .kpi-label { font-size: 0.85rem; color: #6c757d; text-transform: uppercase; letter-spacing: 0.5px; }
-    .chart-card { border-radius: 12px; border: none; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
-    .sentiment-badge { font-size: 0.75rem; padding: 3px 8px; border-radius: 20px; }
+    :root {
+      --amazon-orange: #ff9900;
+      --amazon-dark: #232f3e;
+      --pos: #28a745; --neg: #dc3545; --neu: #6c757d;
+    }
+    body { background: #f0f2f5; font-family: 'Segoe UI', sans-serif; }
+    .navbar { background: var(--amazon-dark); }
+    .navbar-brand { color: var(--amazon-orange) !important; font-weight: 700; font-size: 1.2rem; letter-spacing: .5px; }
+
+    /* Filter Bar */
+    .filter-bar { background: #fff; border-bottom: 2px solid #e9ecef; padding: 10px 20px; position: sticky; top: 0; z-index: 100; box-shadow: 0 2px 8px rgba(0,0,0,.07); }
+    .filter-label { font-size: .7rem; text-transform: uppercase; color: #6c757d; font-weight: 600; letter-spacing: .5px; margin-bottom: 4px; }
+    .filter-group { display: flex; flex-direction: column; }
+    .filter-pills .btn { font-size: .75rem; padding: 3px 12px; border-radius: 20px; margin-right: 4px; margin-bottom: 2px; }
+    .filter-pills .btn.active { font-weight: 600; }
+    .active-filters { font-size: .75rem; color: #495057; }
+    .filter-badge { background: #fff3cd; color: #856404; border-radius: 20px; padding: 2px 8px; margin-right: 4px; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+    .filter-badge:hover { background: #ffeaa7; }
+
+    /* Cards */
+    .card { border: none; border-radius: 14px; box-shadow: 0 2px 10px rgba(0,0,0,.07); }
+    .kpi-card { transition: transform .15s; }
+    .kpi-card:hover { transform: translateY(-2px); }
+    .kpi-value { font-size: 2rem; font-weight: 700; line-height: 1.1; }
+    .kpi-label { font-size: .75rem; color: #6c757d; text-transform: uppercase; letter-spacing: .5px; margin-top: 4px; }
+    .kpi-icon { font-size: 1.8rem; opacity: .15; position: absolute; right: 16px; top: 16px; }
+    section-title { font-size: .8rem; text-transform: uppercase; letter-spacing: .5px; color: #6c757d; font-weight: 600; }
+
+    /* Sentiment badges */
     .badge-POSITIVE { background: #d4edda; color: #155724; }
     .badge-NEGATIVE { background: #f8d7da; color: #721c24; }
     .badge-NEUTRAL  { background: #e2e3e5; color: #383d41; }
-    .star { color: #ff9900; }
-    #loadingOverlay { position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(255,255,255,0.8); z-index:9999; display:flex; align-items:center; justify-content:center; }
-    .table-sm td, .table-sm th { font-size: 0.85rem; }
-    .refresh-btn { color: #ff9900; border-color: #ff9900; }
-    .refresh-btn:hover { background: #ff9900; color: white; }
+    .sentiment-pill { font-size: .7rem; padding: 2px 8px; border-radius: 20px; font-weight: 500; }
+
+    /* Theme cards */
+    .theme-card { border-radius: 10px; padding: 12px 16px; margin-bottom: 8px; border-left: 4px solid; }
+    .theme-card.issue { border-color: var(--neg); background: #fff5f5; }
+    .theme-card.positive { border-color: var(--pos); background: #f4fff6; }
+    .theme-title { font-weight: 600; font-size: .9rem; }
+    .theme-example { font-size: .78rem; color: #555; margin-top: 4px; font-style: italic; border-left: 2px solid #ddd; padding-left: 8px; }
+    .progress { height: 6px; border-radius: 3px; }
+
+    /* Word clouds */
+    .wc-container canvas { border-radius: 10px; }
+    .wc-label { font-size: .7rem; text-transform: uppercase; letter-spacing: .5px; font-weight: 600; }
+
+    /* Reviews table */
+    .table-sm td, .table-sm th { font-size: .82rem; vertical-align: middle; }
+    .star-rating { color: var(--amazon-orange); font-size: .85rem; }
+    .review-body-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+
+    /* Loading */
+    #loadingOverlay { position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(255,255,255,.85); z-index:9999; display:flex; align-items:center; justify-content:center; flex-direction:column; }
+    .spin { width: 48px; height: 48px; border: 4px solid #dee2e6; border-top-color: var(--amazon-orange); border-radius: 50%; animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .refresh-btn { color: var(--amazon-orange); border-color: var(--amazon-orange); }
+    .refresh-btn:hover { background: var(--amazon-orange); color: #fff; }
+    .section-header { font-size: .75rem; text-transform: uppercase; letter-spacing: .6px; color: #6c757d; font-weight: 700; margin-bottom: 12px; }
   </style>
 </head>
 <body>
 
 <div id="loadingOverlay">
-  <div class="text-center">
-    <div class="spinner-border text-warning" style="width:3rem;height:3rem;"></div>
-    <div class="mt-3 text-muted">Loading dashboard...</div>
-  </div>
+  <div class="spin mb-3"></div>
+  <div class="text-muted small">Loading dashboard...</div>
 </div>
 
+<!-- Navbar -->
 <nav class="navbar navbar-dark px-4 py-2">
   <span class="navbar-brand">&#9733; Amazon Reviews Dashboard</span>
-  <div class="d-flex align-items-center gap-3">
+  <div class="d-flex align-items-center gap-2">
     <span id="lastUpdated" class="text-secondary small"></span>
-    <button class="btn btn-sm refresh-btn" onclick="loadAll()">&#8635; Refresh</button>
-    <a id="exportBtn" href="/api/export" class="btn btn-sm btn-outline-light">&#8595; Export CSV</a>
+    <button class="btn btn-sm refresh-btn" onclick="applyFilters()">&#8635; Refresh</button>
+    <button class="btn btn-sm btn-outline-light" onclick="exportCSV()">&#8595; Export</button>
   </div>
 </nav>
+
+<!-- Filter Bar -->
+<div class="filter-bar">
+  <div class="d-flex align-items-start gap-4 flex-wrap">
+
+    <div class="filter-group">
+      <div class="filter-label">Product</div>
+      <select id="fProduct" class="form-select form-select-sm" style="min-width:180px" onchange="applyFilters()">
+        <option value="">All Products</option>
+      </select>
+    </div>
+
+    <div class="filter-group">
+      <div class="filter-label">Sentiment</div>
+      <div class="filter-pills d-flex">
+        <button class="btn btn-sm btn-outline-secondary active" data-sentiment="" onclick="setSentiment(this,'')">All</button>
+        <button class="btn btn-sm btn-outline-success" data-sentiment="POSITIVE" onclick="setSentiment(this,'POSITIVE')">😊 Positive</button>
+        <button class="btn btn-sm btn-outline-secondary" data-sentiment="NEUTRAL" onclick="setSentiment(this,'NEUTRAL')">😐 Neutral</button>
+        <button class="btn btn-sm btn-outline-danger" data-sentiment="NEGATIVE" onclick="setSentiment(this,'NEGATIVE')">😞 Negative</button>
+      </div>
+    </div>
+
+    <div class="filter-group">
+      <div class="filter-label">Category</div>
+      <div class="filter-pills d-flex flex-wrap" id="categoryPills">
+        <button class="btn btn-sm btn-outline-secondary active" data-cat="" onclick="setCategory(this,'')">All</button>
+      </div>
+    </div>
+
+    <div class="filter-group">
+      <div class="filter-label">Rating</div>
+      <div class="filter-pills d-flex">
+        <button class="btn btn-sm btn-outline-secondary active" data-rating="" onclick="setRating(this,'')">All</button>
+        <button class="btn btn-sm btn-outline-warning" data-rating="5" onclick="setRating(this,'5')">5★</button>
+        <button class="btn btn-sm btn-outline-warning" data-rating="4" onclick="setRating(this,'4')">4★</button>
+        <button class="btn btn-sm btn-outline-warning" data-rating="3" onclick="setRating(this,'3')">3★</button>
+        <button class="btn btn-sm btn-outline-warning" data-rating="2" onclick="setRating(this,'2')">2★</button>
+        <button class="btn btn-sm btn-outline-warning" data-rating="1" onclick="setRating(this,'1')">1★</button>
+      </div>
+    </div>
+
+    <div class="filter-group">
+      <div class="filter-label">Date Range</div>
+      <div class="filter-pills d-flex">
+        <button class="btn btn-sm btn-outline-secondary active" data-days="" onclick="setDays(this,'')">All</button>
+        <button class="btn btn-sm btn-outline-info" data-days="7" onclick="setDays(this,'7')">7 days</button>
+        <button class="btn btn-sm btn-outline-info" data-days="30" onclick="setDays(this,'30')">30 days</button>
+        <button class="btn btn-sm btn-outline-info" data-days="90" onclick="setDays(this,'90')">90 days</button>
+      </div>
+    </div>
+
+  </div>
+
+  <div id="activeFiltersBar" class="mt-2" style="display:none">
+    <span class="text-muted small me-2">Active filters:</span>
+    <span id="activeFilterTags"></span>
+    <button class="btn btn-sm btn-link text-danger p-0 ms-2" onclick="clearAllFilters()">Clear all</button>
+  </div>
+</div>
 
 <div class="container-fluid py-4 px-4">
 
   <!-- KPI Row -->
-  <div class="row g-3 mb-4" id="kpiRow">
+  <div class="row g-3 mb-4">
     <div class="col-6 col-md-3">
-      <div class="card kpi-card p-3">
+      <div class="card kpi-card p-3 position-relative">
+        <div class="kpi-icon">📋</div>
         <div class="kpi-value text-dark" id="kpiTotal">—</div>
         <div class="kpi-label">Total Reviews</div>
       </div>
     </div>
     <div class="col-6 col-md-3">
-      <div class="card kpi-card p-3">
+      <div class="card kpi-card p-3 position-relative">
+        <div class="kpi-icon">😊</div>
         <div class="kpi-value text-success" id="kpiPositive">—</div>
         <div class="kpi-label">Positive</div>
       </div>
     </div>
     <div class="col-6 col-md-3">
-      <div class="card kpi-card p-3">
+      <div class="card kpi-card p-3 position-relative">
+        <div class="kpi-icon">😞</div>
         <div class="kpi-value text-danger" id="kpiNegative">—</div>
         <div class="kpi-label">Negative</div>
       </div>
     </div>
     <div class="col-6 col-md-3">
-      <div class="card kpi-card p-3">
+      <div class="card kpi-card p-3 position-relative">
+        <div class="kpi-icon">⭐</div>
         <div class="kpi-value text-warning" id="kpiRating">—</div>
-        <div class="kpi-label">Avg Rating ★</div>
+        <div class="kpi-label">Avg Rating</div>
       </div>
     </div>
   </div>
@@ -76,15 +182,51 @@
   <!-- Charts Row -->
   <div class="row g-3 mb-4">
     <div class="col-md-4">
-      <div class="card chart-card p-3 h-100">
-        <h6 class="text-muted mb-3">Sentiment Distribution</h6>
+      <div class="card p-3 h-100">
+        <div class="section-header">Sentiment Distribution</div>
         <canvas id="sentimentPie" height="220"></canvas>
       </div>
     </div>
     <div class="col-md-8">
-      <div class="card chart-card p-3 h-100">
-        <h6 class="text-muted mb-3">Sentiment Over Time</h6>
+      <div class="card p-3 h-100">
+        <div class="section-header">Sentiment Over Time</div>
         <canvas id="sentimentTrend" height="220"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Word Clouds Row -->
+  <div class="row g-3 mb-4">
+    <div class="col-md-6">
+      <div class="card p-3">
+        <div class="section-header text-success">😊 What customers love — Positive Word Cloud</div>
+        <div class="wc-container text-center">
+          <canvas id="wcPositive" width="500" height="260"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card p-3">
+        <div class="section-header text-danger">😞 What's going wrong — Negative Word Cloud</div>
+        <div class="wc-container text-center">
+          <canvas id="wcNegative" width="500" height="260"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Top Issues & Top Positives -->
+  <div class="row g-3 mb-4">
+    <div class="col-md-6">
+      <div class="card p-3 h-100">
+        <div class="section-header text-danger">🔴 Top Issues</div>
+        <div id="topIssues"><div class="text-muted small text-center py-3">No data</div></div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card p-3 h-100">
+        <div class="section-header text-success">🟢 Top Praised Aspects</div>
+        <div id="topPositives"><div class="text-muted small text-center py-3">No data</div></div>
       </div>
     </div>
   </div>
@@ -92,24 +234,18 @@
   <!-- Categories + Products -->
   <div class="row g-3 mb-4">
     <div class="col-md-6">
-      <div class="card chart-card p-3 h-100">
-        <h6 class="text-muted mb-3">Issue Categories</h6>
+      <div class="card p-3 h-100">
+        <div class="section-header">Issue Categories Breakdown</div>
         <canvas id="categoryBar" height="260"></canvas>
       </div>
     </div>
     <div class="col-md-6">
-      <div class="card chart-card p-3 h-100">
-        <h6 class="text-muted mb-3">Products</h6>
+      <div class="card p-3 h-100">
+        <div class="section-header">Products Overview</div>
         <div class="table-responsive">
-          <table class="table table-sm table-hover" id="productsTable">
+          <table class="table table-sm table-hover mb-0">
             <thead class="table-light">
-              <tr>
-                <th>Product</th>
-                <th>Reviews</th>
-                <th>Avg ★</th>
-                <th>Positive</th>
-                <th>Negative</th>
-              </tr>
+              <tr><th>Product</th><th>Reviews</th><th>Rating</th><th>😊</th><th>😞</th></tr>
             </thead>
             <tbody id="productsBody"></tbody>
           </table>
@@ -119,216 +255,392 @@
   </div>
 
   <!-- Reviews Table -->
-  <div class="card chart-card p-3">
+  <div class="card p-3">
     <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-      <h6 class="text-muted mb-0">Reviews</h6>
-      <div class="d-flex gap-2 flex-wrap">
+      <div class="section-header mb-0">Reviews <span class="badge bg-secondary" id="reviewCount">0</span></div>
+      <div class="d-flex gap-2">
         <input id="searchInput" class="form-control form-control-sm" style="width:200px"
-               placeholder="Search..." oninput="filterReviews()" />
-        <select id="sentimentFilter" class="form-select form-select-sm" style="width:130px" onchange="filterReviews()">
-          <option value="">All Sentiments</option>
-          <option value="POSITIVE">Positive</option>
-          <option value="NEGATIVE">Negative</option>
-          <option value="NEUTRAL">Neutral</option>
-        </select>
-        <select id="asinFilter" class="form-select form-select-sm" style="width:160px" onchange="filterReviews()">
-          <option value="">All Products</option>
-        </select>
+               placeholder="Search reviews..." oninput="debounceSearch()" />
       </div>
     </div>
     <div class="table-responsive">
       <table class="table table-sm table-hover">
         <thead class="table-light">
           <tr>
-            <th>Product</th>
-            <th>Reviewer</th>
-            <th>★</th>
-            <th>Title</th>
-            <th>Review</th>
-            <th>Sentiment</th>
-            <th>Categories</th>
-            <th>Date</th>
+            <th>Product</th><th>Reviewer</th><th>Rating</th>
+            <th>Title</th><th>Review</th><th>Sentiment</th>
+            <th>Categories</th><th>Date</th>
           </tr>
         </thead>
         <tbody id="reviewsBody"></tbody>
       </table>
     </div>
-    <div id="noDataMsg" class="text-center text-muted py-4" style="display:none;">
-      No reviews found. Run the scraper to collect data.
+    <div id="noDataMsg" class="text-center text-muted py-4" style="display:none">
+      No reviews found. Run the scraper first.
+    </div>
+    <div class="d-flex justify-content-between align-items-center mt-2">
+      <small class="text-muted" id="reviewPageInfo"></small>
+      <div class="d-flex gap-1">
+        <button class="btn btn-sm btn-outline-secondary" id="prevPage" onclick="changePage(-1)">← Prev</button>
+        <button class="btn btn-sm btn-outline-secondary" id="nextPage" onclick="changePage(1)">Next →</button>
+      </div>
     </div>
   </div>
 
 </div>
 
-<script>
-const API = '';
-let charts = {};
-let allProducts = [];
+<!-- Review detail modal -->
+<div class="modal fade" id="reviewModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="modalTitle"></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-2"><span id="modalSentiment"></span> <span id="modalRating" class="star-rating ms-2"></span></div>
+        <div class="mb-2 text-muted small" id="modalMeta"></div>
+        <p id="modalBody"></p>
+        <div id="modalCats"></div>
+      </div>
+    </div>
+  </div>
+</div>
 
-async function fetchJSON(url) {
-  const r = await fetch(API + url);
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// ── State ──────────────────────────────────────────────────────────────────────
+const filters = { sentiment: '', asin: '', category: '', rating: '', days: '' };
+let reviewOffset = 0;
+const REVIEW_LIMIT = 50;
+let charts = {};
+let searchTimer = null;
+let modalBS = null;
+
+// ── Fetch helper ──────────────────────────────────────────────────────────────
+async function api(path, extra = {}) {
+  const p = { ...filters, ...extra };
+  const qs = Object.entries(p).filter(([,v]) => v !== '' && v != null)
+                               .map(([k,v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+  const r = await fetch(`/api/${path}${qs ? '?' + qs : ''}`);
+  if (!r.ok) throw new Error(`${path} ${r.status}`);
   return r.json();
 }
 
-function stars(n) {
-  return n ? '★'.repeat(Math.min(n,5)) + '☆'.repeat(Math.max(0,5-n)) : '—';
+// ── Filter setters ─────────────────────────────────────────────────────────────
+function setSentiment(btn, val) {
+  document.querySelectorAll('[data-sentiment]').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  filters.sentiment = val;
+  applyFilters();
+}
+function setCategory(btn, val) {
+  document.querySelectorAll('[data-cat]').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  filters.category = val;
+  applyFilters();
+}
+function setRating(btn, val) {
+  document.querySelectorAll('[data-rating]').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  filters.rating = val;
+  applyFilters();
+}
+function setDays(btn, val) {
+  document.querySelectorAll('[data-days]').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  filters.days = val;
+  applyFilters();
 }
 
-function pct(val, total) {
-  return total ? Math.round(val / total * 100) + '%' : '0%';
+function clearAllFilters() {
+  filters.sentiment = ''; filters.asin = ''; filters.category = ''; filters.rating = ''; filters.days = '';
+  document.getElementById('fProduct').value = '';
+  document.querySelectorAll('[data-sentiment]').forEach(b => b.classList.remove('active'));
+  document.querySelector('[data-sentiment=""]').classList.add('active');
+  document.querySelectorAll('[data-cat]').forEach(b => b.classList.remove('active'));
+  document.querySelector('[data-cat=""]').classList.add('active');
+  document.querySelectorAll('[data-rating]').forEach(b => b.classList.remove('active'));
+  document.querySelector('[data-rating=""]').classList.add('active');
+  document.querySelectorAll('[data-days]').forEach(b => b.classList.remove('active'));
+  document.querySelector('[data-days=""]').classList.add('active');
+  applyFilters();
 }
 
-async function loadKPIs() {
-  const d = await fetchJSON('/api/overview');
-  const s = d.sentiment || {};
-  const pos = s.POSITIVE || 0;
-  const neg = s.NEGATIVE || 0;
-  document.getElementById('kpiTotal').textContent = d.total_reviews || 0;
-  document.getElementById('kpiPositive').textContent = pct(pos, d.tagged_reviews);
-  document.getElementById('kpiNegative').textContent = pct(neg, d.tagged_reviews);
-  document.getElementById('kpiRating').textContent = d.avg_rating || '—';
+function updateActiveFilterBar() {
+  const tags = [];
+  if (filters.sentiment) tags.push([`Sentiment: ${filters.sentiment}`, () => { filters.sentiment=''; document.querySelector('[data-sentiment=""]').click(); }]);
+  if (filters.asin) {
+    const sel = document.getElementById('fProduct');
+    const name = sel.options[sel.selectedIndex]?.text || filters.asin;
+    tags.push([`Product: ${name}`, () => { filters.asin=''; document.getElementById('fProduct').value=''; applyFilters(); }]);
+  }
+  if (filters.category) tags.push([`Category: ${filters.category}`, () => { filters.category=''; document.querySelector('[data-cat=""]').click(); }]);
+  if (filters.rating) tags.push([`Rating: ${filters.rating}★`, () => { filters.rating=''; document.querySelector('[data-rating=""]').click(); }]);
+  if (filters.days) tags.push([`Last ${filters.days} days`, () => { filters.days=''; document.querySelector('[data-days=""]').click(); }]);
 
-  // Pie chart
-  const labels = ['Positive', 'Neutral', 'Negative'];
-  const values = [pos, s.NEUTRAL || 0, neg];
-  const colors = ['#28a745', '#6c757d', '#dc3545'];
-  destroyChart('sentimentPie');
-  charts.sentimentPie = new Chart(document.getElementById('sentimentPie'), {
-    type: 'doughnut',
-    data: { labels, datasets: [{ data: values, backgroundColor: colors, borderWidth: 2 }] },
-    options: {
-      plugins: { legend: { position: 'bottom' } },
-      cutout: '60%'
-    }
+  const bar = document.getElementById('activeFiltersBar');
+  const cont = document.getElementById('activeFilterTags');
+  if (!tags.length) { bar.style.display = 'none'; return; }
+  bar.style.display = '';
+  cont.innerHTML = '';
+  tags.forEach(([label, fn]) => {
+    const span = document.createElement('span');
+    span.className = 'filter-badge';
+    span.innerHTML = `${label} ✕`;
+    span.onclick = fn;
+    cont.appendChild(span);
   });
 }
 
+// ── Load filter options ────────────────────────────────────────────────────────
+async function loadFilterOptions() {
+  const data = await api('filter-options');
+  const sel = document.getElementById('fProduct');
+  data.products.forEach(p => {
+    const o = document.createElement('option');
+    o.value = p.asin; o.textContent = p.name;
+    sel.appendChild(o);
+  });
+  sel.onchange = () => { filters.asin = sel.value; applyFilters(); };
+
+  const pillBox = document.getElementById('categoryPills');
+  data.categories.forEach(cat => {
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-sm btn-outline-secondary';
+    btn.dataset.cat = cat;
+    btn.textContent = cat;
+    btn.onclick = () => setCategory(btn, cat);
+    pillBox.appendChild(btn);
+  });
+}
+
+// ── KPIs ───────────────────────────────────────────────────────────────────────
+async function loadKPIs() {
+  const d = await api('overview');
+  const s = d.sentiment || {};
+  const pos = s.POSITIVE || 0, neg = s.NEGATIVE || 0;
+  const tagged = d.tagged_reviews || 0;
+  document.getElementById('kpiTotal').textContent    = d.total_reviews ?? '—';
+  document.getElementById('kpiPositive').textContent = tagged ? pct(pos, tagged) : '—';
+  document.getElementById('kpiNegative').textContent = tagged ? pct(neg, tagged) : '—';
+  document.getElementById('kpiRating').textContent   = d.avg_rating ? d.avg_rating + ' ★' : '—';
+
+  destroyChart('sentimentPie');
+  charts.sentimentPie = new Chart(document.getElementById('sentimentPie'), {
+    type: 'doughnut',
+    data: {
+      labels: ['Positive', 'Neutral', 'Negative'],
+      datasets: [{ data: [pos, s.NEUTRAL||0, neg], backgroundColor: ['#28a745','#6c757d','#dc3545'], borderWidth: 2 }]
+    },
+    options: { plugins: { legend: { position: 'bottom', labels: { font: { size: 11 } } } }, cutout: '65%' }
+  });
+}
+
+// ── Sentiment trend ────────────────────────────────────────────────────────────
 async function loadTrend() {
-  const data = await fetchJSON('/api/sentiment-trend');
+  const data = await api('sentiment-trend');
   if (!data.length) return;
-  const labels = data.map(d => d.date);
   destroyChart('sentimentTrend');
   charts.sentimentTrend = new Chart(document.getElementById('sentimentTrend'), {
     type: 'line',
     data: {
-      labels,
+      labels: data.map(d => d.date),
       datasets: [
-        { label: 'Positive', data: data.map(d => d.POSITIVE), borderColor: '#28a745', backgroundColor: 'rgba(40,167,69,0.1)', tension: 0.3, fill: true },
-        { label: 'Neutral',  data: data.map(d => d.NEUTRAL),  borderColor: '#6c757d', backgroundColor: 'rgba(108,117,125,0.1)', tension: 0.3, fill: true },
-        { label: 'Negative', data: data.map(d => d.NEGATIVE), borderColor: '#dc3545', backgroundColor: 'rgba(220,53,69,0.1)', tension: 0.3, fill: true },
+        { label: 'Positive', data: data.map(d => d.POSITIVE), borderColor: '#28a745', backgroundColor: 'rgba(40,167,69,.1)', tension: .3, fill: true },
+        { label: 'Neutral',  data: data.map(d => d.NEUTRAL),  borderColor: '#6c757d', backgroundColor: 'rgba(108,117,125,.1)', tension: .3, fill: true },
+        { label: 'Negative', data: data.map(d => d.NEGATIVE), borderColor: '#dc3545', backgroundColor: 'rgba(220,53,69,.1)',  tension: .3, fill: true },
       ]
     },
-    options: {
-      plugins: { legend: { position: 'bottom' } },
-      scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }
-    }
+    options: { plugins: { legend: { position: 'bottom', labels: { font: { size: 11 } } } }, scales: { y: { beginAtZero: true } } }
   });
 }
 
+// ── Categories ─────────────────────────────────────────────────────────────────
 async function loadCategories() {
-  const data = await fetchJSON('/api/categories');
+  const data = await api('categories');
   if (!data.length) return;
   destroyChart('categoryBar');
   charts.categoryBar = new Chart(document.getElementById('categoryBar'), {
     type: 'bar',
     data: {
       labels: data.map(d => d.category),
-      datasets: [{
-        label: 'Mentions',
-        data: data.map(d => d.count),
-        backgroundColor: '#ff9900',
-        borderRadius: 6,
-      }]
+      datasets: [{ label: 'Mentions', data: data.map(d => d.count), backgroundColor: '#ff9900', borderRadius: 6 }]
     },
-    options: {
-      indexAxis: 'y',
-      plugins: { legend: { display: false } },
-      scales: { x: { beginAtZero: true, ticks: { stepSize: 1 } } }
-    }
+    options: { indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true } } }
   });
 }
 
+// ── Products ───────────────────────────────────────────────────────────────────
 async function loadProducts() {
-  allProducts = await fetchJSON('/api/products');
+  const data = await api('products');
   const tbody = document.getElementById('productsBody');
   tbody.innerHTML = '';
-  const sel = document.getElementById('asinFilter');
-  sel.innerHTML = '<option value="">All Products</option>';
-  allProducts.forEach(p => {
-    const opt = document.createElement('option');
-    opt.value = p.asin;
-    opt.textContent = p.name || p.asin;
-    sel.appendChild(opt);
+  data.forEach(p => {
     const total = p.review_count || 0;
-    tbody.innerHTML += `
-      <tr>
-        <td title="${p.asin}">${(p.name || p.asin).substring(0, 28)}</td>
-        <td>${total}</td>
-        <td class="star">${p.avg_rating || '—'}</td>
-        <td class="text-success">${pct(p.positive||0, total)}</td>
-        <td class="text-danger">${pct(p.negative||0, total)}</td>
-      </tr>`;
+    tbody.innerHTML += `<tr>
+      <td title="${p.asin}">${(p.name||p.asin).substring(0,26)}</td>
+      <td>${total}</td>
+      <td class="star-rating">${p.avg_rating || '—'} ★</td>
+      <td class="text-success fw-bold">${pct(p.positive||0, total)}</td>
+      <td class="text-danger fw-bold">${pct(p.negative||0, total)}</td>
+    </tr>`;
   });
 }
 
-async function filterReviews() {
-  const search = document.getElementById('searchInput').value;
-  const sentiment = document.getElementById('sentimentFilter').value;
-  const asin = document.getElementById('asinFilter').value;
-  let url = `/api/reviews?limit=100&offset=0`;
-  if (search) url += `&search=${encodeURIComponent(search)}`;
-  if (sentiment) url += `&sentiment=${sentiment}`;
-  if (asin) url += `&asin=${asin}`;
-  const data = await fetchJSON(url);
-  renderReviews(data);
+// ── Word Clouds ────────────────────────────────────────────────────────────────
+async function loadWordClouds() {
+  const [posWords, negWords] = await Promise.all([
+    api('wordcloud', { sentiment: 'POSITIVE' }),
+    api('wordcloud', { sentiment: 'NEGATIVE' })
+  ]);
+  renderWordCloud('wcPositive', posWords, '#1a7a3a');
+  renderWordCloud('wcNegative', negWords, '#b71c1c');
 }
 
-function renderReviews(data) {
+function renderWordCloud(canvasId, words, color) {
+  const canvas = document.getElementById(canvasId);
+  if (!words || !words.length) { canvas.getContext('2d').clearRect(0,0,canvas.width,canvas.height); return; }
+  const max = words[0][1];
+  const list = words.slice(0, 60).map(([w, c]) => [w, Math.round(10 + (c / max) * 40)]);
+  WordCloud(canvas, {
+    list,
+    gridSize: 8,
+    weightFactor: 1,
+    fontFamily: 'Segoe UI, sans-serif',
+    color,
+    rotateRatio: 0.3,
+    rotationSteps: 2,
+    backgroundColor: 'transparent',
+    drawOutOfBound: false,
+    shrinkToFit: true,
+  });
+}
+
+// ── Top Issues & Positives ─────────────────────────────────────────────────────
+async function loadTopThemes() {
+  const [issues, positives] = await Promise.all([
+    api('top-issues'),
+    api('top-positives')
+  ]);
+  renderThemes('topIssues', issues, 'issue', '#dc3545');
+  renderThemes('topPositives', positives, 'positive', '#28a745');
+}
+
+function renderThemes(containerId, themes, type, color) {
+  const el = document.getElementById(containerId);
+  if (!themes || !themes.length) {
+    el.innerHTML = '<div class="text-muted small text-center py-3">Not enough tagged reviews yet.</div>';
+    return;
+  }
+  el.innerHTML = themes.map(t => `
+    <div class="theme-card ${type}">
+      <div class="d-flex justify-content-between align-items-center">
+        <div class="theme-title">${t.category}</div>
+        <span class="badge" style="background:${color}">${t.count} reviews (${t.pct}%)</span>
+      </div>
+      <div class="progress mt-2 mb-2"><div class="progress-bar" style="width:${t.pct}%;background:${color}"></div></div>
+      ${(t.examples||[]).map(ex => `<div class="theme-example">"${ex.replace(/"/g,'&quot;')}…"</div>`).join('')}
+    </div>`).join('');
+}
+
+// ── Reviews table ──────────────────────────────────────────────────────────────
+async function loadReviews(offset = 0) {
+  reviewOffset = offset;
+  const search = document.getElementById('searchInput').value;
+  const data = await api('reviews', { search, limit: REVIEW_LIMIT, offset });
   const tbody = document.getElementById('reviewsBody');
   const noData = document.getElementById('noDataMsg');
   tbody.innerHTML = '';
+
   if (!data.length) {
     noData.style.display = '';
+    document.getElementById('reviewCount').textContent = '0';
     return;
   }
   noData.style.display = 'none';
+  document.getElementById('reviewCount').textContent = data.length + (data.length === REVIEW_LIMIT ? '+' : '');
+
   data.forEach(r => {
-    const cats = Array.isArray(r.categories) ? r.categories.join(', ') : (r.categories || '');
-    const body = (r.body || '').substring(0, 120) + ((r.body || '').length > 120 ? '…' : '');
-    const sent = r.sentiment || '';
-    tbody.innerHTML += `
-      <tr>
-        <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.product_name||r.asin}">${(r.product_name || r.asin || '').substring(0,20)}</td>
-        <td>${r.reviewer_name || '—'}</td>
-        <td class="star">${r.rating ? '★'.repeat(r.rating) : '—'}</td>
-        <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.title||''}">${r.title || '—'}</td>
-        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.body||''}">${body}</td>
-        <td><span class="sentiment-badge badge-${sent}">${sent}</span></td>
-        <td style="font-size:0.75rem">${cats}</td>
-        <td style="white-space:nowrap">${r.review_date || '—'}</td>
-      </tr>`;
+    const cats = Array.isArray(r.categories) ? r.categories : (r.categories ? JSON.parse(r.categories) : []);
+    const catBadges = cats.map(c => `<span class="badge bg-light text-dark border" style="font-size:.65rem">${c}</span>`).join(' ');
+    const stars = r.rating ? '★'.repeat(r.rating) + '☆'.repeat(5 - r.rating) : '—';
+    tbody.innerHTML += `<tr onclick="showReview(${JSON.stringify(r).replace(/"/g,'&quot;')})" style="cursor:pointer">
+      <td style="max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(r.product_name||r.asin||'').substring(0,20)}</td>
+      <td style="white-space:nowrap">${r.reviewer_name||'—'}</td>
+      <td class="star-rating" style="white-space:nowrap;font-size:.8rem">${stars}</td>
+      <td style="max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.title||'—'}</td>
+      <td class="review-body-cell">${(r.body||'').substring(0,100)}</td>
+      <td><span class="sentiment-pill badge-${r.sentiment||''}">${r.sentiment||'—'}</span></td>
+      <td style="max-width:120px">${catBadges}</td>
+      <td style="white-space:nowrap">${r.review_date||'—'}</td>
+    </tr>`;
   });
+
+  document.getElementById('prevPage').disabled = offset === 0;
+  document.getElementById('nextPage').disabled = data.length < REVIEW_LIMIT;
+  document.getElementById('reviewPageInfo').textContent =
+    `Showing ${offset + 1}–${offset + data.length}`;
 }
 
-function destroyChart(id) {
-  if (charts[id]) { charts[id].destroy(); delete charts[id]; }
+function changePage(dir) {
+  const newOffset = Math.max(0, reviewOffset + dir * REVIEW_LIMIT);
+  loadReviews(newOffset);
 }
 
-async function loadAll() {
+function debounceSearch() {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => loadReviews(0), 400);
+}
+
+function showReview(r) {
+  const cats = Array.isArray(r.categories) ? r.categories : [];
+  document.getElementById('modalTitle').textContent = r.title || '(No title)';
+  document.getElementById('modalSentiment').innerHTML =
+    `<span class="sentiment-pill badge-${r.sentiment}">${r.sentiment||'—'}</span>`;
+  document.getElementById('modalRating').textContent =
+    r.rating ? '★'.repeat(r.rating) + '☆'.repeat(5-r.rating) : '';
+  document.getElementById('modalMeta').textContent =
+    `${r.reviewer_name||'Anonymous'} · ${r.review_date||'Unknown date'} · ${r.product_name||r.asin||''}`;
+  document.getElementById('modalBody').textContent = r.body || '';
+  document.getElementById('modalCats').innerHTML =
+    cats.map(c => `<span class="badge bg-secondary me-1">${c}</span>`).join('');
+  if (!modalBS) modalBS = new bootstrap.Modal(document.getElementById('reviewModal'));
+  modalBS.show();
+}
+
+// ── Export ─────────────────────────────────────────────────────────────────────
+function exportCSV() {
+  const p = Object.entries(filters).filter(([,v]) => v).map(([k,v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+  window.location.href = `/api/export${p ? '?' + p : ''}`;
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
+function pct(val, total) { return total ? Math.round(val / total * 100) + '%' : '0%'; }
+function destroyChart(id) { if (charts[id]) { charts[id].destroy(); delete charts[id]; } }
+
+// ── Main load ──────────────────────────────────────────────────────────────────
+async function applyFilters() {
+  updateActiveFilterBar();
   try {
-    await Promise.all([loadKPIs(), loadTrend(), loadCategories(), loadProducts()]);
-    await filterReviews();
-    document.getElementById('lastUpdated').textContent =
-      'Updated ' + new Date().toLocaleTimeString();
-  } catch (e) {
-    console.error(e);
+    await Promise.all([
+      loadKPIs(), loadTrend(), loadCategories(), loadProducts(),
+      loadWordClouds(), loadTopThemes(), loadReviews(0)
+    ]);
+    document.getElementById('lastUpdated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+  } catch(e) { console.error(e); }
+}
+
+async function init() {
+  try {
+    await loadFilterOptions();
+    await applyFilters();
   } finally {
     document.getElementById('loadingOverlay').style.display = 'none';
   }
 }
 
-loadAll();
+init();
 </script>
 </body>
 </html>
