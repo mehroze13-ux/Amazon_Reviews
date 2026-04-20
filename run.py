@@ -12,7 +12,8 @@ def main():
     # scrape
     sp = subparsers.add_parser("scrape", help="Scrape Amazon reviews")
     sp.add_argument("--asins", default="asins.csv", help="CSV file with ASINs")
-    sp.add_argument("--pages", type=int, default=5, help="Max pages per product")
+    sp.add_argument("--pages", type=int, default=20, help="Max pages to scrape per product")
+    sp.add_argument("--days", type=int, default=30, help="Only collect reviews from last N days")
     sp.add_argument("--headless", action="store_true", help="Hide browser window (default: visible)")
 
     # tag
@@ -31,10 +32,11 @@ def main():
     if args.command == "scrape" or args.command == "all":
         from scraper import run_scraper
         asins = getattr(args, "asins", "asins.csv")
-        pages = getattr(args, "pages", 5)
-        headless = getattr(args, "headless", False)   # False = visible Chrome by default
+        pages = getattr(args, "pages", 20)
+        days = getattr(args, "days", 30)
+        headless = getattr(args, "headless", False)
         log.info("=== STEP 1: Scraping ===")
-        run_scraper(asins_file=asins, max_pages=pages, headless=headless)
+        run_scraper(asins_file=asins, max_pages=pages, days=days, headless=headless)
 
     if args.command == "tag" or args.command == "all":
         from tagger import run_tagger

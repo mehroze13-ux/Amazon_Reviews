@@ -108,7 +108,13 @@ def ensure_logged_in(driver):
 
 
 def wait_if_captcha(driver):
-    if "captcha" in driver.page_source.lower() or "robot" in driver.page_source.lower():
+    # Only trigger on actual captcha form elements, not just page text
+    has_captcha = bool(
+        driver.find_elements(By.CSS_SELECTOR, "form[action='/errors/validateCaptcha']") or
+        driver.find_elements(By.ID, "captchacharacters") or
+        driver.find_elements(By.CSS_SELECTOR, "input[id*='captcha']")
+    )
+    if has_captcha:
         print("\n" + "="*60)
         print("  CAPTCHA detected! Please solve it in the Chrome window.")
         print("="*60)
@@ -123,12 +129,15 @@ def parse_rating(text):
         return None
 
 
-def scrape_product_reviews(driver, asin, max_pages=5):
+def scrape_product_reviews(driver, asin, max_pages=5, days=30):
+    from datetime import datetime, timedelta
+    cutoff = datetime.now() - timedelta(days=days)
     reviews = []
     base_url = f"https://www.amazon.in/product-reviews/{asin}/"
 
     for page in range(1, max_pages + 1):
-        url = f"{base_url}?pageNumber={page}&reviewerType=all_reviews"
+        # sortBy=recent ensures newest reviews appear first
+        url = f"{base_url}?pageNumber={page}&reviewerType=all_reviews&sortBy=recent"
         log.info(f"Scraping ASIN {asin} — page {page}")
 
         driver.get(url)
@@ -170,6 +179,17 @@ def scrape_product_reviews(driver, asin, max_pages=5):
                 review_date = parse_date(date_text)
                 verified = bool(el.find_elements(By.CSS_SELECTOR, "[data-hook='avp-badge']"))
 
+                # Stop entirely once we hit reviews older than our cutoff
+                if review_date:
+                    try:
+                        from datetime import datetime
+                        rd = datetime.strptime(review_date, "%Y-%m-%d")
+                        if rd < cutoff:
+                            log.info(f"Reached reviews older than {days} days — stopping")
+                            return reviews
+                    except Exception:
+                        pass
+
                 if body:
                     reviews.append({
                         "asin": asin,
@@ -193,7 +213,7 @@ def scrape_product_reviews(driver, asin, max_pages=5):
 
         time.sleep(random.uniform(1, 3))
 
-    log.info(f"Got {len(reviews)} reviews for {asin}")
+    log.info(f"Got {len(reviews)} reviews for {asin} in last {days} days")
     return reviews
 
 
@@ -217,7 +237,7 @@ def parse_date(text):
     return text
 
 
-def run_scraper(asins_file="asins.csv", max_pages=5, headless=False):
+def run_scraper(asins_file="asins.csv", max_pages=20, days=30, headless=False):
     import csv
     init_db()
 
@@ -246,7 +266,7 @@ def run_scraper(asins_file="asins.csv", max_pages=5, headless=False):
                 continue
 
             upsert_product(asin, name, category)
-            reviews = scrape_product_reviews(driver, asin, max_pages=max_pages)
+            reviews = scrape_product_reviews(driver, asin, max_pages=max_pages, days=days)
 
             for r in reviews:
                 insert_review(
@@ -273,7 +293,8 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--asins", default="asins.csv")
-    parser.add_argument("--pages", type=int, default=5)
+    parser.add_argument("--pages", type=int, default=20)
+    parser.add_argument("--days", type=int, default=30)
     parser.add_argument("--headless", action="store_true")
     args = parser.parse_args()
-    run_scraper(asins_file=args.asins, max_pages=args.pages, headless=args.headless)
+    run_scraper(asins_file=args.asins, max_pages=args.pages, days=args.days, headless=args.headless)
