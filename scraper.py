@@ -1,6 +1,8 @@
+import os
 import time
 import random
 import logging
+from dotenv import load_dotenv
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
@@ -10,11 +12,15 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException, TimeoutException
 from database import init_db, upsert_product, insert_review
 
+load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
+AMAZON_EMAIL    = os.getenv("AMAZON_EMAIL", "")
+AMAZON_PASSWORD = os.getenv("AMAZON_PASSWORD", "")
 
-def build_driver(headless=True):
+
+def build_driver(headless=False):
     opts = Options()
     if headless:
         opts.add_argument("--headless=new")
@@ -34,8 +40,63 @@ def build_driver(headless=True):
         )
     except Exception:
         driver = webdriver.Chrome(options=opts)
-    driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+    driver.execute_script(
+        "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+    )
+    driver.set_window_size(1280, 900)
     return driver
+
+
+def amazon_login(driver):
+    if not AMAZON_EMAIL or not AMAZON_PASSWORD:
+        log.info("No Amazon credentials in .env — skipping login (may hit CAPTCHAs)")
+        return False
+
+    log.info("Logging in to Amazon.in...")
+    driver.get("https://www.amazon.in/ap/signin?openid.pape.max_auth_age=0&openid.return_to=https%3A%2F%2Fwww.amazon.in%2F&openid.identity=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.assoc_handle=inflex&openid.mode=checkid_setup&openid.claimed_id=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.ns=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0")
+    time.sleep(2)
+
+    try:
+        # Enter email
+        email_field = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.ID, "ap_email"))
+        )
+        email_field.clear()
+        email_field.send_keys(AMAZON_EMAIL)
+        driver.find_element(By.ID, "continue").click()
+        time.sleep(2)
+
+        # Enter password
+        pwd_field = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.ID, "ap_password"))
+        )
+        pwd_field.clear()
+        pwd_field.send_keys(AMAZON_PASSWORD)
+        driver.find_element(By.ID, "signInSubmit").click()
+        time.sleep(3)
+
+        # Check if OTP / CAPTCHA page appeared
+        if "ap/cvf" in driver.current_url or "ap/challenge" in driver.current_url:
+            log.warning("Amazon is asking for OTP or CAPTCHA. Please complete it in the browser window.")
+            input("Press ENTER here once you've completed the verification in the browser...")
+
+        if "amazon.in" in driver.current_url and "signin" not in driver.current_url:
+            log.info("Login successful.")
+            return True
+        else:
+            log.warning("Login may have failed. Continuing anyway...")
+            return False
+
+    except Exception as e:
+        log.warning(f"Login failed: {e}. Continuing without login.")
+        return False
+
+
+def wait_if_captcha(driver):
+    if "captcha" in driver.page_source.lower() or "robot" in driver.page_source.lower():
+        log.warning("CAPTCHA detected! Please solve it in the browser window.")
+        input("Press ENTER here once you've solved the CAPTCHA...")
+        time.sleep(2)
 
 
 def parse_rating(text):
@@ -51,21 +112,19 @@ def scrape_product_reviews(driver, asin, max_pages=5):
 
     for page in range(1, max_pages + 1):
         url = f"{base_url}?pageNumber={page}&reviewerType=all_reviews"
-        log.info(f"Scraping {asin} page {page}")
+        log.info(f"Scraping ASIN {asin} — page {page}")
+
+        driver.get(url)
+        time.sleep(random.uniform(2, 4))
+
+        wait_if_captcha(driver)
+
         try:
-            driver.get(url)
-            time.sleep(random.uniform(2, 4))
-
-            # Check for captcha or block
-            if "robot" in driver.page_source.lower() or "captcha" in driver.page_source.lower():
-                log.warning(f"Blocked on page {page}, stopping for {asin}")
-                break
-
-            WebDriverWait(driver, 10).until(
+            WebDriverWait(driver, 12).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "[data-hook='review']"))
             )
         except TimeoutException:
-            log.warning(f"No reviews found on page {page} for {asin}")
+            log.warning(f"No reviews found on page {page} for {asin} — stopping")
             break
 
         review_els = driver.find_elements(By.CSS_SELECTOR, "[data-hook='review']")
@@ -75,17 +134,20 @@ def scrape_product_reviews(driver, asin, max_pages=5):
         for el in review_els:
             try:
                 name = _text(el, ".a-profile-name")
-                rating_text = _text(el, "[data-hook='review-star-rating'] .a-icon-alt") or \
-                              _text(el, "[data-hook='cmps-review-star-rating'] .a-icon-alt")
+                rating_text = (
+                    _text(el, "[data-hook='review-star-rating'] .a-icon-alt") or
+                    _text(el, "[data-hook='cmps-review-star-rating'] .a-icon-alt")
+                )
                 rating = parse_rating(rating_text) if rating_text else None
+
                 title_el = el.find_element(By.CSS_SELECTOR, "[data-hook='review-title']")
                 title = title_el.text.strip()
-                # Strip leading star rating text from title
                 for line in title.splitlines():
                     line = line.strip()
                     if line and not line[0].isdigit():
                         title = line
                         break
+
                 body = _text(el, "[data-hook='review-body'] span")
                 date_text = _text(el, "[data-hook='review-date']")
                 review_date = parse_date(date_text)
@@ -102,10 +164,9 @@ def scrape_product_reviews(driver, asin, max_pages=5):
                         "verified_purchase": verified,
                     })
             except Exception as e:
-                log.debug(f"Skipping review: {e}")
+                log.debug(f"Skipping one review: {e}")
                 continue
 
-        # Check if there's a next page
         try:
             next_btn = driver.find_element(By.CSS_SELECTOR, "li.a-last a")
             if not next_btn.is_displayed():
@@ -115,7 +176,7 @@ def scrape_product_reviews(driver, asin, max_pages=5):
 
         time.sleep(random.uniform(1, 3))
 
-    log.info(f"Scraped {len(reviews)} reviews for {asin}")
+    log.info(f"Got {len(reviews)} reviews for {asin}")
     return reviews
 
 
@@ -129,7 +190,6 @@ def _text(parent, selector):
 def parse_date(text):
     if not text:
         return None
-    # Format: "Reviewed in India on 12 March 2024"
     try:
         from datetime import datetime
         parts = text.split(" on ")
@@ -140,7 +200,7 @@ def parse_date(text):
     return text
 
 
-def run_scraper(asins_file="asins.csv", max_pages=5, headless=True):
+def run_scraper(asins_file="asins.csv", max_pages=5, headless=False):
     import csv
     init_db()
 
@@ -151,13 +211,15 @@ def run_scraper(asins_file="asins.csv", max_pages=5, headless=True):
             products.append(row)
 
     if not products:
-        log.error("No products in asins.csv")
+        log.error("No products found in asins.csv")
         return
 
     driver = build_driver(headless=headless)
     total_saved = 0
 
     try:
+        amazon_login(driver)
+
         for product in products:
             asin = product.get("asin", "").strip()
             name = product.get("name", asin).strip()
@@ -181,12 +243,13 @@ def run_scraper(asins_file="asins.csv", max_pages=5, headless=True):
                 )
                 total_saved += 1
 
-            log.info(f"Saved {len(reviews)} reviews for {name} ({asin})")
+            log.info(f"Saved {len(reviews)} reviews for {name}")
             time.sleep(random.uniform(3, 6))
+
     finally:
         driver.quit()
 
-    log.info(f"Scraping complete. Total reviews saved: {total_saved}")
+    log.info(f"Done. Total reviews saved: {total_saved}")
 
 
 if __name__ == "__main__":
@@ -194,6 +257,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--asins", default="asins.csv")
     parser.add_argument("--pages", type=int, default=5)
-    parser.add_argument("--no-headless", action="store_true")
+    parser.add_argument("--headless", action="store_true", help="Run browser invisibly")
     args = parser.parse_args()
-    run_scraper(asins_file=args.asins, max_pages=args.pages, headless=not args.no_headless)
+    run_scraper(asins_file=args.asins, max_pages=args.pages, headless=args.headless)

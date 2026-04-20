@@ -2,7 +2,10 @@ import os
 import json
 import logging
 import requests
+from dotenv import load_dotenv
 from database import init_db, get_untagged_reviews, insert_tag
+
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
